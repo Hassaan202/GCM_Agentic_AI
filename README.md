@@ -1,1 +1,1 @@
-# GCM_Agentic_AI
+# GCM Agentic AI
