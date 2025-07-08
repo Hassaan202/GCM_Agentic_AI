@@ -4,7 +4,7 @@ import torch
 from langchain_core.messages import (HumanMessage, AIMessage, BaseMessage, SystemMessage, ToolMessage,
                                      messages_to_dict,
                                      messages_from_dict)
-from langchain_core.tools import tool
+from langchain_core.tools import tool, InjectedToolCallId
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from langchain_google_genai import ChatGoogleGenerativeAI
@@ -13,10 +13,16 @@ from dotenv import load_dotenv
 import os
 import json
 from predictor import predict_glucose
+from langgraph.types import Command, interrupt
+from langgraph.checkpoint.memory import MemorySaver
 
 
+memory = MemorySaver()
+
+# TODO: add proper env variable handling
 load_dotenv()
 os.environ["GOOGLE_API_KEY"] = "AIzaSyAHOUenB7kFRGfGYxdE4vNwhCIzsRs3LMA"
+
 
 
 # --- Define state structure ---
@@ -32,7 +38,8 @@ class AgentState(TypedDict):
     low_range: float
     high_range: float
     emergency: bool
-    healthcare_provider_informed: bool
+    user_input: str
+
 
 
 # --- LangGraph Nodes ---
@@ -66,26 +73,26 @@ def classify_risk(state: AgentState):
     else:
         level = "Normal"
 
-    # print(f"Emergency: {emergency}")
-
     return {"glucose_level": level, "emergency": emergency}
 
 
 def emergency_escalation_node(state: AgentState):
-    user_input = input(f"Your glucose levels are critical ({state['predicted_glucose']} mg/dL) . Would you like to notify "
-                       f"your healthcare provider? (yes/no): ")
-
     messages = [
-        SystemMessage(content=f"If the user wants to notify, ONLY then call the `notify_healthcare_provider` tool with "
+        SystemMessage(content=f"First call the `get_user_input` tool to get the user input. Then, if the user wants to "
+                              f"notify and replies positively (like yes), ONLY then call the `notify_healthcare_provider` tool with "
                               f"appropriate the user summary using the data: Predicted: {state["predicted_glucose"]},"
-                              f" Glucose Level: {state["glucose_level"]}. Otherwise DONNOT call the tool."),
-        HumanMessage(content=user_input)
+                              f" Glucose Level: {state["glucose_level"]}. Otherwise DONNOT call the tool and just "
+                              f"provide a simple summary."
+                              f"Current message history: {state['messages']}"),
     ]
 
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite-preview-06-17", temperature=0.2).bind_tools(tools)
+    user_text = state.get("user_input", "You are a helpful agent.")
+    messages += [HumanMessage(content=user_text)]
+
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2).bind_tools(tools)
     response = llm.invoke(messages)
 
-    return {"messages": messages + [response]}
+    return {"messages": [response]}
 
 
 def trend_node(state: AgentState):
@@ -111,11 +118,11 @@ def coach_node(state: AgentState):
         You are a helpful Diabetes Management Assistant. You will help the patient manage their glucose levels based on 
         CGM data. Be helpful and supportive. 
         Predicted glucose is {state["predicted_glucose"]:.1f} mg/dL which is {state["glucose_level"]}.
-        Give clinical advice only and ask no follow up questions.
+        Give detailed clinical advice only and ask no follow up questions.
         """
     systemPrompt = SystemMessage(content=prompt)
 
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite-preview-06-17", temperature=0.4)
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite-preview-06-17", temperature=0.2)
     response = llm.invoke([systemPrompt] + ["Glucose level: " + state["glucose_level"]])
 
     return {"advice": response.content}
@@ -156,8 +163,25 @@ def notify_healthcare_provider(user_data_summary: str):
     return f"The healthcare provider has been informed! Meanwhile perform some precautionary measures."
 
 
+@tool
+def get_user_input(glucose_level: str, tool_call_id: Annotated[str, InjectedToolCallId]):
+    """
+    Gets the user input to decide if user wants to notify the healthcare provider or not
+    Args:
+        tool_call_id: tool call ID
+        glucose_level: the predicted glucose level of the patient
+    """
+    user_input = input(f"Your glucose levels are critical ({glucose_level} mg/dL) . Would you like "
+                       f"to notify your healthcare provider? (yes/no): ")
+    state_update = {
+        "user_input": user_input,
+        "messages": [ToolMessage("User response: " + user_input, tool_call_id=tool_call_id)]
+    }
+    return Command(update=state_update)
 
-tools = [notify_healthcare_provider]
+
+
+tools = [notify_healthcare_provider, get_user_input]
 
 
 # --- Build LangGraph ---
@@ -170,8 +194,7 @@ graph.add_node("Classify", classify_risk)
 graph.add_node("Trend", trend_node)
 graph.add_node("Coach", coach_node)
 graph.add_node("Emergency", emergency_escalation_node)
-toolNode = ToolNode(tools=tools)
-graph.add_node("Tools", toolNode)
+graph.add_node("Tools", ToolNode(tools=tools))
 
 
 # Set Flow
@@ -195,7 +218,7 @@ graph.add_conditional_edges(
         False: "Trend"
     }
 )
-graph.add_edge("Tools", "Trend")
+graph.add_edge("Tools", "Emergency")
 
 # Compile the graph
 graph = graph.compile()

@@ -1,10 +1,11 @@
 import glob
 import torch
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import ToolMessage, HumanMessage
 from sklearn.preprocessing import MinMaxScaler
 from graph import graph
 import os
 import pandas as pd
+from langgraph.types import Command, interrupt
 
 
 #Loading the Dataset
@@ -42,6 +43,7 @@ data_scaled = scaler.fit_transform(data) # transform the data between 0 and 1
 window = data_scaled[-72:]
 input_tensor = torch.tensor(window, dtype=torch.float32).unsqueeze(0) # convert into a 3D tensor
 
+config = {"configurable": {"thread_id": "1"}}
 
 result = graph.invoke({
     "patient_id": patient_id,
@@ -51,7 +53,6 @@ result = graph.invoke({
     "high_range": 180,
     "messages": [],
 })
-
 
 print("🔮 Predicted Glucose:", result["predicted_glucose"])
 
