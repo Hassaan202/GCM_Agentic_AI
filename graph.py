@@ -16,7 +16,7 @@ from predictor import predict_glucose
 
 
 load_dotenv()
-os.environ["GOOGLE_API_KEY"] = "AIzaSyAHOUenB7kFRGfGYxdE4vNwhCIzsRs3LMA"
+os.environ["GOOGLE_API_KEY"] = ""
 
 
 # --- Define state structure ---
