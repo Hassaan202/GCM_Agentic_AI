@@ -21,7 +21,7 @@ memory = MemorySaver()
 
 # TODO: add proper env variable handling
 load_dotenv()
-os.environ["GOOGLE_API_KEY"] = "AIzaSyAHOUenB7kFRGfGYxdE4vNwhCIzsRs3LMA"
+os.environ["GOOGLE_API_KEY"] = ""
 
 
 
