@@ -14,7 +14,10 @@ class GlucoseLSTM(nn.Module):
         out = self.fc(hn[-1])
         return out
 
+
 model = GlucoseLSTM()
+model.load_state_dict(torch.load("glucose_lstm_predictor/LSTM_glucose_predictor.pt", map_location=torch.device('cpu')))
+model.eval()
 
 
 def predict_glucose(input_tensor, patient_data):

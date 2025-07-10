@@ -28,7 +28,8 @@ cgm_df = pd.concat(all_data, ignore_index=True)
 
 
 # extracting the data for a test
-patient_id = 'HUPA0015P'
+# HUPA0015P - normal case, HUPA0005P - emergency hyper/hypoglycemia case
+patient_id = 'HUPA0005P'
 patient_data = cgm_df[cgm_df['patient_id'] == patient_id].sort_values('time') # sort for time-series data
 
 features = ['glucose', 'calories', 'heart_rate', 'steps',
@@ -47,12 +48,21 @@ config = {"configurable": {"thread_id": "1"}}
 
 result = graph.invoke({
     "patient_id": patient_id,
-    "input_tensor": input_tensor,
-    "raw_patient_data": patient_data,
+    "input_tensor": input_tensor.tolist(),
+    "raw_patient_data": patient_data.to_dict(orient="records"),
     "low_range": 70,
     "high_range": 180,
     "messages": [],
-})
+}, config)
+
+interrupts = result.get("__interrupt__", [])
+
+if interrupts:
+    interrupt_value = interrupts[0].value
+    question = interrupt_value.get("question")
+    user_input = input(question)
+    result = graph.invoke(Command(resume=user_input), config=config)
+
 
 print("🔮 Predicted Glucose:", result["predicted_glucose"])
 

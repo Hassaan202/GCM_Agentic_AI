@@ -10,8 +10,6 @@ from langgraph.prebuilt import ToolNode
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, START, END
 from dotenv import load_dotenv
-import os
-import json
 from predictor import predict_glucose
 from langgraph.types import Command, interrupt
 from langgraph.checkpoint.memory import MemorySaver
@@ -19,10 +17,7 @@ from langgraph.checkpoint.memory import MemorySaver
 
 memory = MemorySaver()
 
-# TODO: add proper env variable handling
 load_dotenv()
-os.environ["GOOGLE_API_KEY"] = ""
-
 
 
 # --- Define state structure ---
@@ -44,12 +39,14 @@ class AgentState(TypedDict):
 
 # --- LangGraph Nodes ---
 def predict_node(state: AgentState):
-    input_tensor = state["input_tensor"]
-    patient_data = state["raw_patient_data"]
+    input_tensor = torch.tensor(state["input_tensor"])
+    patient_data = pd.DataFrame(state["raw_patient_data"])
 
     predicted = predict_glucose(input_tensor, patient_data)
 
-    return {"predicted_glucose": predicted}
+    return {
+        "predicted_glucose": float(predicted)
+    }
 
 
 def classify_risk(state: AgentState):
@@ -78,25 +75,27 @@ def classify_risk(state: AgentState):
 
 def emergency_escalation_node(state: AgentState):
     messages = [
-        SystemMessage(content=f"First call the `get_user_input` tool to get the user input. Then, if the user wants to "
-                              f"notify and replies positively (like yes), ONLY then call the `notify_healthcare_provider` tool with "
+        SystemMessage(content=f"First call the `get_user_input` tool to get the user input. Then, based on "
+                              f"the user input from the last tool call, see if user and replies positively (like yes, please etc.) and wants to "
+                              f"notify the healthcare provider, ONLY then call the `notify_healthcare_provider` tool with "
                               f"appropriate the user summary using the data: Predicted: {state["predicted_glucose"]},"
-                              f" Glucose Level: {state["glucose_level"]}. Otherwise DONNOT call the tool and just "
-                              f"provide a simple summary."
+                              f" Glucose Level: {state["glucose_level"]}. If the user does not wants to inform the "
+                              f"healthcare provider then DONNOT call the `notify_healthcare_provider` tool and "
+                              f"just reply about the user intent and condition summary."
                               f"Current message history: {state['messages']}"),
     ]
 
     user_text = state.get("user_input", "You are a helpful agent.")
     messages += [HumanMessage(content=user_text)]
 
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2).bind_tools(tools)
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.0).bind_tools(tools)
     response = llm.invoke(messages)
 
     return {"messages": [response]}
 
 
 def trend_node(state: AgentState):
-    patient_data = state["raw_patient_data"].copy()
+    patient_data = pd.DataFrame(state["raw_patient_data"].copy())
     patient_data = patient_data.sort_values("time").reset_index(drop=True)
 
     recent_glucose = patient_data["glucose"].ffill().tail(6).values
@@ -164,15 +163,19 @@ def notify_healthcare_provider(user_data_summary: str):
 
 
 @tool
-def get_user_input(glucose_level: str, tool_call_id: Annotated[str, InjectedToolCallId]):
+def get_user_input(predicted_glucose: float, glucose_level: str, tool_call_id: Annotated[str, InjectedToolCallId]):
     """
     Gets the user input to decide if user wants to notify the healthcare provider or not
     Args:
+        predicted_glucose: the predicted glucose number
         tool_call_id: tool call ID
         glucose_level: the predicted glucose level of the patient
     """
-    user_input = input(f"Your glucose levels are critical ({glucose_level} mg/dL) . Would you like "
-                       f"to notify your healthcare provider? (yes/no): ")
+    # note that the interrupt node causes the entire node to be re-executed so stand-alone node or side effect stuff
+    # placed after the interrupt call
+    user_input = interrupt({"question": f"Your glucose levels are critical ({predicted_glucose:.2f} mg/dL -"
+                                        f" {glucose_level})."
+                                        f" Would you like to notify your healthcare provider?"})
     state_update = {
         "user_input": user_input,
         "messages": [ToolMessage("User response: " + user_input, tool_call_id=tool_call_id)]
@@ -221,4 +224,4 @@ graph.add_conditional_edges(
 graph.add_edge("Tools", "Emergency")
 
 # Compile the graph
-graph = graph.compile()
+graph = graph.compile(checkpointer=memory)
