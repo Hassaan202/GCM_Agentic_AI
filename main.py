@@ -29,7 +29,7 @@ cgm_df = pd.concat(all_data, ignore_index=True)
 
 # extracting the data for a test
 # HUPA0015P - normal case, HUPA0005P - emergency hyper/hypoglycemia case
-patient_id = 'HUPA0005P'
+patient_id = 'HUPA0015P'
 patient_data = cgm_df[cgm_df['patient_id'] == patient_id].sort_values('time') # sort for time-series data
 
 features = ['glucose', 'calories', 'heart_rate', 'steps',
@@ -53,6 +53,7 @@ result = graph.invoke({
     "low_range": 70,
     "high_range": 180,
     "messages": [],
+    "rag_complete": False,
 }, config)
 
 interrupts = result.get("__interrupt__", [])
@@ -70,7 +71,7 @@ print("🚦 Glucose Level:", result["glucose_level"])
 
 print("📈 Trend Note:", result["trend_note"])
 
-if isinstance(result.get("messages"), list) and len(result.get("messages")) > 0:
+if result.get("emergency", False):
     print("🚦 Emergency Management:\n", result["messages"][-1].content)
 
 print("🧠 Advice:\n", result["advice"])

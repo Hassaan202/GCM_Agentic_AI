@@ -1,23 +1,29 @@
+import os
 from typing import TypedDict, List, Union, Annotated, Sequence
 import pandas as pd
 import torch
+from langchain_community.vectorstores import Chroma
 from langchain_core.messages import (HumanMessage, AIMessage, BaseMessage, SystemMessage, ToolMessage,
                                      messages_to_dict,
                                      messages_from_dict)
 from langchain_core.tools import tool, InjectedToolCallId
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, START, END
 from dotenv import load_dotenv
+
 from predictor import predict_glucose
 from langgraph.types import Command, interrupt
 from langgraph.checkpoint.memory import MemorySaver
+from rag import retriever
 
 
 memory = MemorySaver()
 
 load_dotenv()
+# print(user_agent)
 
 
 # --- Define state structure ---
@@ -34,7 +40,7 @@ class AgentState(TypedDict):
     high_range: float
     emergency: bool
     user_input: str
-
+    rag_complete: bool
 
 
 # --- LangGraph Nodes ---
@@ -113,18 +119,49 @@ def trend_node(state: AgentState):
 
 
 def coach_node(state: AgentState):
-    prompt = f"""
-        You are a helpful Diabetes Management Assistant. You will help the patient manage their glucose levels based on 
-        CGM data. Be helpful and supportive. 
-        Predicted glucose is {state["predicted_glucose"]:.1f} mg/dL which is {state["glucose_level"]}.
-        Give detailed clinical advice only and ask no follow up questions.
+    if state.get("rag_complete", False):
+        rag_results = ""
+        for message in reversed(state["messages"]):
+            if isinstance(message, ToolMessage):
+                rag_results = message.content
+                break
+        print(f"RAG: {rag_results}")
+
+        prompt = f"""
+        You are a helpful Diabetes Management Assistant. Based on the retrieved information and patient data, 
+        provide concise yet comprehensive clinical advice for glucose management. Mention the sources of the
+        recommendations and provide text with newlines.
+
+        Patient Information:
+        - Predicted glucose: {state["predicted_glucose"]:.1f} mg/dL
+        - Glucose level: {state["glucose_level"]}
+        - Trend: {state.get("trend_note", "stable")}
+
+        Retrieved Information:
+        {rag_results}
+
+        Please provide specific, actionable advice based on this information. Do not ask follow-up questions.
         """
-    systemPrompt = SystemMessage(content=prompt)
 
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash-lite-preview-06-17", temperature=0.2)
-    response = llm.invoke([systemPrompt] + ["Glucose level: " + state["glucose_level"]])
+        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2)
+        response = llm.invoke([HumanMessage(content=prompt)])
 
-    return {"advice": response.content}
+        return {"advice": response.content, "rag_complete": False}
+
+    else:
+        # First time in coach node, initiate RAG
+        prompt = f"""
+        You are a helpful Diabetes Management Assistant. The patient has a predicted glucose level of 
+        {state["predicted_glucose"]:.1f} mg/dL which is {state["glucose_level"]}.
+
+        Please use the retriever tool to find relevant information about managing {state["glucose_level"].lower()} 
+        glucose levels and diabetes management.
+        """
+
+        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2).bind_tools(rag_tools)
+        response = llm.invoke([HumanMessage(content=prompt)])
+
+        return {"messages": [response], "rag_complete": True}
 
 
 
@@ -147,6 +184,19 @@ def router_info(state: AgentState):
         # print("DEBUG: Routing to Tools")
         return True
     # print("DEBUG: Routing to Trend")
+    return False
+
+
+def router_coaching_rag(state: AgentState):
+    """Check if the last message contains tool calls."""
+    if state.get("rag_complete", False):
+        return True
+
+    if state.get('messages') and len(state['messages']) > 0:
+        last_message = state['messages'][-1]
+        if hasattr(last_message, 'tool_calls') and len(last_message.tool_calls) > 0:
+            return True
+
     return False
 
 
@@ -183,8 +233,25 @@ def get_user_input(predicted_glucose: float, glucose_level: str, tool_call_id: A
     return Command(update=state_update)
 
 
+@tool
+def retriever_tool(query: str) -> str:
+    """
+    This tool searches and returns the information from the Vector Store documents
+    """
+    documents = retriever.invoke(query)
+
+    if not documents:
+        return "I found no relevant information in the documents."
+
+    results = []
+    for i, doc in enumerate(documents):
+        results.append(f"Document {i + 1}:\n{doc.page_content}")
+
+    return "\n\n".join(results)
+
 
 tools = [notify_healthcare_provider, get_user_input]
+rag_tools = [retriever_tool]
 
 
 # --- Build LangGraph ---
@@ -198,6 +265,7 @@ graph.add_node("Trend", trend_node)
 graph.add_node("Coach", coach_node)
 graph.add_node("Emergency", emergency_escalation_node)
 graph.add_node("Tools", ToolNode(tools=tools))
+graph.add_node("RagTools", ToolNode(tools=rag_tools))
 
 
 # Set Flow
@@ -212,7 +280,15 @@ graph.add_conditional_edges(
     }
 )
 graph.add_edge("Trend", "Coach")
-graph.add_edge("Coach", END)
+graph.add_conditional_edges(
+    "Coach",
+    router_coaching_rag,
+    {
+        True: "RagTools",
+        False: END
+    }
+)
+graph.add_edge("RagTools", "Coach")
 graph.add_conditional_edges(
     "Emergency",
     router_info,
