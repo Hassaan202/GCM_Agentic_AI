@@ -2,6 +2,8 @@ import os
 from typing import TypedDict, List, Union, Annotated, Sequence
 import pandas as pd
 import torch
+from IPython.core.display import Image
+from IPython.core.display_functions import display
 from langchain_community.vectorstores import Chroma
 from langchain_core.messages import (HumanMessage, AIMessage, BaseMessage, SystemMessage, ToolMessage,
                                      messages_to_dict,
@@ -13,11 +15,13 @@ from langgraph.prebuilt import ToolNode
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, START, END
 from dotenv import load_dotenv
+from langchain_core.runnables.graph import CurveStyle, MermaidDrawMethod, NodeStyles
+import playwright
 
 from predictor import predict_glucose
 from langgraph.types import Command, interrupt
 from langgraph.checkpoint.memory import MemorySaver
-from rag import retriever
+from rag import get_retriever
 
 
 memory = MemorySaver()
@@ -41,6 +45,7 @@ class AgentState(TypedDict):
     emergency: bool
     user_input: str
     rag_complete: bool
+    emergency_response: str
 
 
 # --- LangGraph Nodes ---
@@ -87,15 +92,22 @@ def emergency_escalation_node(state: AgentState):
                               f"appropriate the user summary using the data: Predicted: {state["predicted_glucose"]},"
                               f" Glucose Level: {state["glucose_level"]}. If the user does not wants to inform the "
                               f"healthcare provider then DONNOT call the `notify_healthcare_provider` tool and "
-                              f"just reply about the user intent and condition summary."
+                              f"reply with the user intent and condition summary."
                               f"Current message history: {state['messages']}"),
     ]
 
     user_text = state.get("user_input", "You are a helpful agent.")
     messages += [HumanMessage(content=user_text)]
 
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.0).bind_tools(tools)
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1).bind_tools(tools)
     response = llm.invoke(messages)
+
+    if not hasattr(messages[-1], "tool_calls"):
+        return {
+            "messages": [response],
+            "emergency_response": response.content
+        }
+
 
     return {"messages": [response]}
 
@@ -125,7 +137,8 @@ def coach_node(state: AgentState):
             if isinstance(message, ToolMessage):
                 rag_results = message.content
                 break
-        print(f"RAG: {rag_results}")
+
+        print(f"RAG:\n {rag_results}")
 
         prompt = f"""
         You are a helpful Diabetes Management Assistant. Based on the retrieved information and patient data, 
@@ -134,16 +147,18 @@ def coach_node(state: AgentState):
 
         Patient Information:
         - Predicted glucose: {state["predicted_glucose"]:.1f} mg/dL
+        - Emergency: {state["emergency"]} 
         - Glucose level: {state["glucose_level"]}
         - Trend: {state.get("trend_note", "stable")}
 
         Retrieved Information:
         {rag_results}
 
-        Please provide specific, actionable advice based on this information. Do not ask follow-up questions.
+        Please provide specific, actionable advice based on this information to manage the current glucose 
+        level. Make sure to give correct advice if emergency hyper or hypoglycemia. Do not ask follow-up questions. 
         """
 
-        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2)
+        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1)
         response = llm.invoke([HumanMessage(content=prompt)])
 
         return {"advice": response.content, "rag_complete": False}
@@ -155,7 +170,9 @@ def coach_node(state: AgentState):
         {state["predicted_glucose"]:.1f} mg/dL which is {state["glucose_level"]}.
 
         Please use the retriever tool to find relevant information about managing {state["glucose_level"].lower()} 
-        glucose levels and diabetes management.
+        glucose levels. If the patient has a low glucose level, include in the query the term hypoglycemia and 
+        managing low blood sugar. if the level is high, include the term hyperglycemia and managing high blood glucose. 
+        Make the query appropriate for retrieval from a vector store.
         """
 
         llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2).bind_tools(rag_tools)
@@ -237,7 +254,10 @@ def get_user_input(predicted_glucose: float, glucose_level: str, tool_call_id: A
 def retriever_tool(query: str) -> str:
     """
     This tool searches and returns the information from the Vector Store documents
+    Args:
+        query: the query searched for within the vector store
     """
+    retriever = get_retriever()
     documents = retriever.invoke(query)
 
     if not documents:
@@ -301,3 +321,7 @@ graph.add_edge("Tools", "Emergency")
 
 # Compile the graph
 graph = graph.compile(checkpointer=memory)
+
+# Visualization
+with open("mermaid_graph.txt", 'w') as f:
+    f.write(graph.get_graph().draw_mermaid())

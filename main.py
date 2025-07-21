@@ -6,6 +6,7 @@ from graph import graph
 import os
 import pandas as pd
 from langgraph.types import Command, interrupt
+import pprint
 
 
 #Loading the Dataset
@@ -29,7 +30,7 @@ cgm_df = pd.concat(all_data, ignore_index=True)
 
 # extracting the data for a test
 # HUPA0015P - normal case, HUPA0005P - emergency hyper/hypoglycemia case
-patient_id = 'HUPA0015P'
+patient_id = 'HUPA0005P'
 patient_data = cgm_df[cgm_df['patient_id'] == patient_id].sort_values('time') # sort for time-series data
 
 features = ['glucose', 'calories', 'heart_rate', 'steps',
@@ -72,6 +73,8 @@ print("🚦 Glucose Level:", result["glucose_level"])
 print("📈 Trend Note:", result["trend_note"])
 
 if result.get("emergency", False):
-    print("🚦 Emergency Management:\n", result["messages"][-1].content)
+    print("🚦 Emergency Management:\n", result["emergency_response"])
+
+pprint.pprint(result["messages"])
 
 print("🧠 Advice:\n", result["advice"])
