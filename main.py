@@ -30,7 +30,7 @@ cgm_df = pd.concat(all_data, ignore_index=True)
 
 # extracting the data for a test
 # HUPA0015P - normal case, HUPA0005P - emergency hyper/hypoglycemia case
-patient_id = 'HUPA0005P'
+patient_id = 'HUPA0015P'
 patient_data = cgm_df[cgm_df['patient_id'] == patient_id].sort_values('time') # sort for time-series data
 
 features = ['glucose', 'calories', 'heart_rate', 'steps',

@@ -138,7 +138,7 @@ def coach_node(state: AgentState):
                 rag_results = message.content
                 break
 
-        print(f"RAG:\n {rag_results}")
+        # print(f"RAG:\n {rag_results}")
 
         prompt = f"""
         You are a helpful Diabetes Management Assistant. Based on the retrieved information and patient data, 
