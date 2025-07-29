@@ -75,6 +75,6 @@ print("📈 Trend Note:", result["trend_note"])
 if result.get("emergency", False):
     print("🚦 Emergency Management:\n", result["emergency_response"])
 
-pprint.pprint(result["messages"])
+# pprint.pprint(result["messages"])
 
 print("🧠 Advice:\n", result["advice"])

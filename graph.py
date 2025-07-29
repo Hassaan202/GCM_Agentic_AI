@@ -158,7 +158,7 @@ def coach_node(state: AgentState):
         level. Make sure to give correct advice if emergency hyper or hypoglycemia. Do not ask follow-up questions. 
         """
 
-        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1)
+        llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0.1)
         response = llm.invoke([HumanMessage(content=prompt)])
 
         return {"advice": response.content, "rag_complete": False}
@@ -175,7 +175,7 @@ def coach_node(state: AgentState):
         Make the query appropriate for retrieval from a vector store.
         """
 
-        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2).bind_tools(rag_tools)
+        llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0.2).bind_tools(rag_tools)
         response = llm.invoke([HumanMessage(content=prompt)])
 
         return {"messages": [response], "rag_complete": True}
