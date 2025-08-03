@@ -13,7 +13,7 @@ from predictor import predict_glucose
 from langgraph.types import Command, interrupt
 from langgraph.checkpoint.memory import MemorySaver
 from rag import get_retriever
-
+from send_email import send_email
 
 memory = MemorySaver()
 
@@ -41,6 +41,8 @@ class AgentState(TypedDict):
     diabetes_proficiency: str
     emergency_contact_number: str
     emergency_email: str
+    id: str
+    name: str
 
 
 # --- LangGraph Nodes ---
@@ -85,7 +87,9 @@ def emergency_escalation_node(state: AgentState):
                               f"the user input from the last tool call, see if user and replies positively (like yes, please etc.) and wants to "
                               f"notify the healthcare provider, ONLY then call the `notify_healthcare_provider` tool with "
                               f"appropriate the user summary using the data: Predicted: {state["predicted_glucose"]},"
-                              f" Glucose Level: {state["glucose_level"]} and the emergency email: {state["emergency_email"]}. "
+                              f" Glucose Level: {state["glucose_level"]}, name: {state["name"]}, id: {state["id"]}. "
+                              f"also pass the emergency email:"
+                              f" {state["emergency_email"]} as an argument."
                               f"If the user does not wants to inform the healthcare provider then DONNOT call the"
                               f" `notify_healthcare_provider` tool and "
                               f"reply with the user intent and condition summary."
@@ -103,7 +107,6 @@ def emergency_escalation_node(state: AgentState):
             "messages": [response],
             "emergency_response": response.content
         }
-
 
     return {"messages": [response]}
 
@@ -220,10 +223,10 @@ def notify_healthcare_provider(user_data_summary: str, emergency_email: str):
     """
     Notifies the healthcare provider about the medical situation of the person
     Args:
-        user_data_summary: the summary of user glucose data and risk level
+        user_data_summary: the summary of username, ID, glucose data and risk level
         emergency_email: the email of a known person
     """
-
+    send_email(f"Emergency Notification", user_data_summary, emergency_email)
     return f"The healthcare provider has been informed! Meanwhile perform some precautionary measures."
 
 

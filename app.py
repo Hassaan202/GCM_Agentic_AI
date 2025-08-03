@@ -291,7 +291,7 @@ if cgm_df is not None and data_found:
 
                     # patient data loaded
                     patient_bio_df = pd.read_csv("user_data/patient_profiles.csv")
-                    patient_bio_data = get_patient_data(current_patient_id, patient_bio_df)
+                    patient_bio_data = get_patient_data(current_patient_id, patient_bio_df) # the user data row
 
                     # Run the graph analysis
                     result = graph.invoke({
@@ -306,7 +306,9 @@ if cgm_df is not None and data_found:
                         "gender": patient_bio_data["gender"],
                         "diabetes_proficiency": patient_bio_data["Diabetes Proficiency"],
                         "emergency_contact_number": patient_bio_data["emergency_contact_number"],
-                        "emergency_email": patient_bio_data["emergency_email"]
+                        "emergency_email": patient_bio_data["emergency_email"],
+                        "name": patient_bio_data["name"],
+                        "id": patient_bio_data["patient_id"]
                     }, config)
 
                     # Handle user input
