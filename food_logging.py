@@ -13,8 +13,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Configure Gemini API
-# Add your API key here or use environment variable
 GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY")
+
+if not st.session_state.get("logged_in", False):
+    st.error("❌ Please log in to access this page")
+    st.stop()
 
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
@@ -185,8 +188,18 @@ def main():
             st.info("API key entered. Please restart the app or use secrets.toml for permanent configuration.")
 
     # Sidebar for settings
-    st.sidebar.header("Recording Settings")
-    duration = st.sidebar.slider("Recording Duration (seconds)", 1, 15, 4)
+    with st.sidebar:
+        st.write(f"👤 Welcome, {st.session_state.get('patient_name', 'Patient')}")
+        st.write(f"ID: {st.session_state.get('patient_id', '')}")
+
+        st.sidebar.header("Recording Settings")
+        duration = st.sidebar.slider("Recording Duration (seconds)", 1, 15, 4)
+
+        if st.button("🚪 Logout", type="secondary"):
+            st.session_state.logged_in = False
+            st.session_state.patient_id = None
+            st.session_state.patient_name = None
+            st.rerun()
 
     # Main interface
     col1, col2 = st.columns([2, 1])
@@ -218,7 +231,7 @@ def main():
                     # Transcribe audio
                     with st.spinner("🔄 Transcribing audio..."):
                         try:
-                            transcribed_text = transcribe_audio_modified(audio_file)
+                            transcribed_text = transcribe_audio(audio_file)
 
                             if transcribed_text:
                                 st.success("✅ Transcription completed!")
@@ -298,7 +311,7 @@ def main():
     # Instructions
     st.subheader("📋 How to Use")
     st.markdown("""
-    1. **Configure API**: Add your Gemini API key in the sidebar or secrets
+    1. **Configure API**: Add your Gemini API key to the secrets
     2. **Click 'Start Recording'** to begin voice recording
     3. **Speak clearly** about what you ate (e.g., "I had a grilled chicken breast and a cup of rice")
     4. **Wait for AI analysis** - the app will identify food items and calories
@@ -312,23 +325,6 @@ def main():
     - Be specific about food types (brown rice vs white rice)
     - Use a quiet environment for recording
     """)
-
-
-def transcribe_audio_modified(filename):
-    """Modified version of your transcribe_audio function"""
-    try:
-        from faster_whisper import WhisperModel
-        model = WhisperModel("small", compute_type="int8")
-
-        segments, info = model.transcribe(filename)
-        final_text = ""
-        for segment in segments:
-            final_text += segment.text
-
-        return final_text.strip()
-    except Exception as e:
-        st.error(f"Error in transcription: {str(e)}")
-        return None
 
 
 if __name__ == "__main__":

@@ -1,0 +1,7 @@
+patient_id,password,name,age,gender,Diabetes Proficiency,emergency_contact_number,emergency_email
+HUPA0001P,123,Sarah,34,Female,High,555-1201,sarah.johnson@example.com
+HUPA0002P,123,Michael,58,Male,Medium,555-1202,michael.smith@example.com
+HUPA0003P,123,Emma,45,Female,Low,555-1203,emma.williams@example.com
+HUPA0004P,123,James,29,Male,High,555-1204,james.brown@example.com
+HUPA0005P,123,Linda,67,Female,Medium,555-1205,linda.miller@example.com
+HUPA0006P,123,Alex,51,Non-binary,Low,555-1206,alex.taylor@example.com

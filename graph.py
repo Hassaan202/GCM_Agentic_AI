@@ -1,22 +1,13 @@
-import os
 from typing import TypedDict, List, Union, Annotated, Sequence
 import pandas as pd
 import torch
-from IPython.core.display import Image
-from IPython.core.display_functions import display
-from langchain_community.vectorstores import Chroma
-from langchain_core.messages import (HumanMessage, AIMessage, BaseMessage, SystemMessage, ToolMessage,
-                                     messages_to_dict,
-                                     messages_from_dict)
+from langchain_core.messages import (HumanMessage, BaseMessage, SystemMessage, ToolMessage)
 from langchain_core.tools import tool, InjectedToolCallId
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, START, END
 from dotenv import load_dotenv
-from langchain_core.runnables.graph import CurveStyle, MermaidDrawMethod, NodeStyles
-import playwright
 
 from predictor import predict_glucose
 from langgraph.types import Command, interrupt
@@ -27,7 +18,6 @@ from rag import get_retriever
 memory = MemorySaver()
 
 load_dotenv()
-# print(user_agent)
 
 
 # --- Define state structure ---
@@ -46,6 +36,11 @@ class AgentState(TypedDict):
     user_input: str
     rag_complete: bool
     emergency_response: str
+    age: int
+    gender: str
+    diabetes_proficiency: str
+    emergency_contact_number: str
+    emergency_email: str
 
 
 # --- LangGraph Nodes ---
@@ -90,8 +85,9 @@ def emergency_escalation_node(state: AgentState):
                               f"the user input from the last tool call, see if user and replies positively (like yes, please etc.) and wants to "
                               f"notify the healthcare provider, ONLY then call the `notify_healthcare_provider` tool with "
                               f"appropriate the user summary using the data: Predicted: {state["predicted_glucose"]},"
-                              f" Glucose Level: {state["glucose_level"]}. If the user does not wants to inform the "
-                              f"healthcare provider then DONNOT call the `notify_healthcare_provider` tool and "
+                              f" Glucose Level: {state["glucose_level"]} and the emergency email: {state["emergency_email"]}. "
+                              f"If the user does not wants to inform the healthcare provider then DONNOT call the"
+                              f" `notify_healthcare_provider` tool and "
                               f"reply with the user intent and condition summary."
                               f"Current message history: {state['messages']}"),
     ]
@@ -99,7 +95,7 @@ def emergency_escalation_node(state: AgentState):
     user_text = state.get("user_input", "You are a helpful agent.")
     messages += [HumanMessage(content=user_text)]
 
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1).bind_tools(tools)
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0.1).bind_tools(tools)
     response = llm.invoke(messages)
 
     if not hasattr(messages[-1], "tool_calls"):
@@ -146,6 +142,9 @@ def coach_node(state: AgentState):
         recommendations and provide text with newlines.
 
         Patient Information:
+        - Age: {state["age"]}
+        - Gender: {state["gender"]}
+        - Diabetes Proficiency: {state["diabetes_proficiency"]}
         - Predicted glucose: {state["predicted_glucose"]:.1f} mg/dL
         - Emergency: {state["emergency"]} 
         - Glucose level: {state["glucose_level"]}
@@ -156,6 +155,7 @@ def coach_node(state: AgentState):
 
         Please provide specific, actionable advice based on this information to manage the current glucose 
         level. Make sure to give correct advice if emergency hyper or hypoglycemia. Do not ask follow-up questions. 
+        Also, the information provided should be understandable to the user based on their diabetes proficiency level. 
         """
 
         llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0.1)
@@ -192,9 +192,6 @@ def router_info(state: AgentState):
         return False
 
     last_message = state["messages"][-1]
-    # print(f"DEBUG: Last message type: {type(last_message)}")
-    # print(f"DEBUG: Has tool_calls attr: {hasattr(last_message, 'tool_calls')}")
-    # print(f"DEBUG: tool_calls value: {getattr(last_message, 'tool_calls', 'NO ATTR')}")
 
     # Check if the last message has tool calls and they're not empty
     if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
@@ -219,13 +216,14 @@ def router_coaching_rag(state: AgentState):
 
 # --- Tool Nodes ---
 @tool
-def notify_healthcare_provider(user_data_summary: str):
+def notify_healthcare_provider(user_data_summary: str, emergency_email: str):
     """
     Notifies the healthcare provider about the medical situation of the person
     Args:
         user_data_summary: the summary of user glucose data and risk level
+        emergency_email: the email of a known person
     """
-    # TODO: Add some mechanism to inform the healthcare provider about the situation
+
     return f"The healthcare provider has been informed! Meanwhile perform some precautionary measures."
 
 

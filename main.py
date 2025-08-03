@@ -55,6 +55,11 @@ result = graph.invoke({
     "high_range": 180,
     "messages": [],
     "rag_complete": False,
+    "age": 21,
+    "gender": "Male",
+    "diabetes_proficiency": "High",
+    "emergency_contact_number": "555-1201",
+    "emergency_email": "sarah.johnson@example.com"
 }, config)
 
 interrupts = result.get("__interrupt__", [])
