@@ -44,19 +44,42 @@ if 'graph_config' not in st.session_state:
 if 'current_patient_data' not in st.session_state:
     st.session_state.current_patient_data = None
 
+# Add food log session state tracking
+if 'session_carbs' not in st.session_state:
+    st.session_state.session_carbs = 0.0
+if 'session_fats' not in st.session_state:
+    st.session_state.session_fats = 0.0
+if 'session_protein' not in st.session_state:
+    st.session_state.session_protein = 0.0
+if 'food_logs' not in st.session_state:
+    st.session_state.food_logs = []
+
 # Sidebar for configuration
 with st.sidebar:
     st.write(f"👤 Welcome, {st.session_state.get('patient_name', 'Patient')}")
     st.write(f"ID: {st.session_state.get('patient_id', '')}")
 
-    st.sidebar.header("⚙️ Configuration")
-    low_range = st.sidebar.number_input("Low Glucose Range (mg/dL)", value=70, min_value=50, max_value=100)
-    high_range = st.sidebar.number_input("High Glucose Range (mg/dL)", value=180, min_value=150, max_value=250)
+    st.header("⚙️ Configuration")
+    low_range = st.number_input("Low Glucose Range (mg/dL)", value=70, min_value=50, max_value=100)
+    high_range = st.number_input("High Glucose Range (mg/dL)", value=180, min_value=150, max_value=250)
+
+    # Add this after the existing sidebar metrics
+    st.header("🍽️ Today's Nutrition")
+    st.metric("Carbs", f"{st.session_state.session_carbs:.1f}g")
+    st.metric("Protein", f"{st.session_state.session_protein:.1f}g")
+    st.metric("Fats", f"{st.session_state.session_fats:.1f}g")
+    if st.session_state.food_logs:
+        total_calories = sum(item['total_calories'] for item in st.session_state.food_logs)
+        st.metric("Total Calories", f"{total_calories:.0f}")
 
     if st.button("🚪 Logout", type="secondary"):
         st.session_state.logged_in = False
         st.session_state.patient_id = None
         st.session_state.patient_name = None
+        st.session_state.session_carbs = 0.0
+        st.session_state.session_fats = 0.0
+        st.session_state.session_protein = 0.0
+        st.session_state.food_logs = []
         st.rerun()
 
 # Get current user's patient ID
@@ -308,7 +331,11 @@ if cgm_df is not None and data_found:
                         "emergency_contact_number": patient_bio_data["emergency_contact_number"],
                         "emergency_email": patient_bio_data["emergency_email"],
                         "name": patient_bio_data["name"],
-                        "id": patient_bio_data["patient_id"]
+                        "id": patient_bio_data["patient_id"],
+                        "carbs_grams": st.session_state.session_carbs,
+                        "protein_grams": st.session_state.session_protein,
+                        "fat_grams": st.session_state.session_fats,
+                        "food_logs": st.session_state.food_logs
                     }, config)
 
                     # Handle user input
@@ -439,6 +466,11 @@ if cgm_df is not None and data_found:
         if "advice" in result:
             st.subheader("🧠 AI Recommendations")
             st.markdown(result["advice"])
+
+        # Routine Planning section
+        if "routine_plan" in result:
+            st.subheader("📅 Personalized Routine Plan")
+            st.markdown(result["routine_plan"])
 
         # Reset button to run again
         if st.button("🔄 Run New Analysis"):

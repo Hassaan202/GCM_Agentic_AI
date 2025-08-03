@@ -32,6 +32,13 @@ if 'audio_data' not in st.session_state:
     st.session_state.audio_data = None
 if 'pending_food_items' not in st.session_state:
     st.session_state.pending_food_items = []
+# Add session tracking for macronutrients
+if 'session_carbs' not in st.session_state:
+    st.session_state.session_carbs = 0.0
+if 'session_fats' not in st.session_state:
+    st.session_state.session_fats = 0.0
+if 'session_protein' not in st.session_state:
+    st.session_state.session_protein = 0.0
 
 
 def record_audio(duration=5, sample_rate=44100):
@@ -52,7 +59,6 @@ def record_audio(duration=5, sample_rate=44100):
 def save_audio(audio_data, sample_rate, filename="tmp.m4a"):
     """Save audio data to file"""
     try:
-        # Convert to wav first (soundfile doesn't support m4a directly)
         temp_wav = "temp_recording.wav"
         sf.write(temp_wav, audio_data, sample_rate)
         return temp_wav
@@ -62,14 +68,14 @@ def save_audio(audio_data, sample_rate, filename="tmp.m4a"):
 
 
 def process_food_with_gemini(transcribed_text):
-    """Use Gemini API to extract food items and calories"""
+    """Use Gemini API to extract food items with calories and macronutrients"""
     if not GEMINI_API_KEY:
         st.error("Gemini API key not configured. Please add your API key.")
         return None
 
     try:
         prompt = f"""
-        Analyze the following text and extract food items with their typical serving sizes and calories per serving.
+        Analyze the following text and extract food items with their typical serving sizes, calories, and macronutrients per serving.
 
         Text: "{transcribed_text}"
 
@@ -77,18 +83,27 @@ def process_food_with_gemini(transcribed_text):
         - "food_name": string (name of the food item)
         - "typical_serving": string (typical serving size, e.g., "1 cup", "1 slice", "100g")
         - "calories_per_serving": number (calories in the typical serving)
+        - "carbs_per_serving": number (carbohydrates in grams per serving)
+        - "fats_per_serving": number (fats in grams per serving)
+        - "protein_per_serving": number (protein in grams per serving)
 
         Example format:
         [
             {{
                 "food_name": "chicken breast",
                 "typical_serving": "100g",
-                "calories_per_serving": 165
+                "calories_per_serving": 165,
+                "carbs_per_serving": 0,
+                "fats_per_serving": 3.6,
+                "protein_per_serving": 31
             }},
             {{
                 "food_name": "rice",
                 "typical_serving": "1 cup cooked",
-                "calories_per_serving": 205
+                "calories_per_serving": 205,
+                "carbs_per_serving": 45,
+                "fats_per_serving": 0.4,
+                "protein_per_serving": 4.3
             }}
         ]
 
@@ -144,6 +159,9 @@ def display_food_confirmation(food_items):
                 st.write(f"**Food:** {item['food_name']}")
                 st.write(f"**Typical serving:** {item['typical_serving']}")
                 st.write(f"**Calories per serving:** {item['calories_per_serving']}")
+                st.write(f"**Carbs per serving:** {item.get('carbs_per_serving', 0)}g")
+                st.write(f"**Fats per serving:** {item.get('fats_per_serving', 0)}g")
+                st.write(f"**Protein per serving:** {item.get('protein_per_serving', 0)}g")
 
             with col2:
                 serving_quantity = st.number_input(
@@ -157,7 +175,14 @@ def display_food_confirmation(food_items):
 
             with col3:
                 total_calories = serving_quantity * item['calories_per_serving']
+                total_carbs = serving_quantity * item.get('carbs_per_serving', 0)
+                total_fats = serving_quantity * item.get('fats_per_serving', 0)
+                total_protein = serving_quantity * item.get('protein_per_serving', 0)
+
                 st.metric("Total Calories", f"{total_calories:.0f}")
+                st.metric("Total Carbs", f"{total_carbs:.1f}g")
+                st.metric("Total Fats", f"{total_fats:.1f}g")
+                st.metric("Total Protein", f"{total_protein:.1f}g")
 
             # Add confirm button for each item
             if st.button(f"✅ Add {item['food_name']}", key=f"confirm_{i}"):
@@ -166,10 +191,22 @@ def display_food_confirmation(food_items):
                     'food_name': item['food_name'],
                     'typical_serving': item['typical_serving'],
                     'calories_per_serving': item['calories_per_serving'],
+                    'carbs_per_serving': item.get('carbs_per_serving', 0),
+                    'fats_per_serving': item.get('fats_per_serving', 0),
+                    'protein_per_serving': item.get('protein_per_serving', 0),
                     'serving_quantity': serving_quantity,
-                    'total_calories': total_calories
+                    'total_calories': total_calories,
+                    'total_carbs': total_carbs,
+                    'total_fats': total_fats,
+                    'total_protein': total_protein
                 }
                 st.session_state.food_logs.append(confirmed_item)
+
+                # Update session macronutrient totals
+                st.session_state.session_carbs += total_carbs
+                st.session_state.session_fats += total_fats
+                st.session_state.session_protein += total_protein
+
                 st.success(f"✅ Added {item['food_name']} to your food log!")
 
     return confirmed_items
@@ -199,6 +236,11 @@ def main():
             st.session_state.logged_in = False
             st.session_state.patient_id = None
             st.session_state.patient_name = None
+            # Clear session macronutrient tracking on logout
+            st.session_state.session_carbs = 0.0
+            st.session_state.session_fats = 0.0
+            st.session_state.session_protein = 0.0
+            st.session_state.food_logs = []
             st.rerun()
 
     # Main interface
@@ -264,6 +306,12 @@ def main():
             total_calories = sum(item['total_calories'] for item in st.session_state.food_logs)
             st.metric("Total Calories Today", f"{total_calories:.0f}")
 
+        # Display session macronutrient totals
+        st.subheader("Session Macros")
+        st.metric("Total Carbs", f"{st.session_state.session_carbs:.1f}g")
+        st.metric("Total Fats", f"{st.session_state.session_fats:.1f}g")
+        st.metric("Total Protein", f"{st.session_state.session_protein:.1f}g")
+
     # Display pending food items for confirmation
     if st.session_state.pending_food_items:
         display_food_confirmation(st.session_state.pending_food_items)
@@ -282,7 +330,8 @@ def main():
 
         # Reorder columns for better display
         column_order = ['timestamp', 'food_name', 'typical_serving', 'serving_quantity',
-                        'calories_per_serving', 'total_calories']
+                        'calories_per_serving', 'carbs_per_serving', 'fats_per_serving', 'protein_per_serving',
+                        'total_calories', 'total_carbs', 'total_fats', 'total_protein']
         df = df[column_order]
 
         st.dataframe(df, use_container_width=True)
@@ -303,6 +352,10 @@ def main():
         with col2:
             if st.button("🗑️ Clear All Logs"):
                 st.session_state.food_logs = []
+                # Reset session macronutrient totals when clearing logs
+                st.session_state.session_carbs = 0.0
+                st.session_state.session_fats = 0.0
+                st.session_state.session_protein = 0.0
                 st.success("All logs cleared!")
                 st.rerun()
     else:
@@ -314,9 +367,9 @@ def main():
     1. **Configure API**: Add your Gemini API key to the secrets
     2. **Click 'Start Recording'** to begin voice recording
     3. **Speak clearly** about what you ate (e.g., "I had a grilled chicken breast and a cup of rice")
-    4. **Wait for AI analysis** - the app will identify food items and calories
+    4. **Wait for AI analysis** - the app will identify food items, calories, and macronutrients
     5. **Confirm items and quantities** - adjust serving sizes as needed
-    6. **Add to log** - each confirmed item will be saved with calories
+    6. **Add to log** - each confirmed item will be saved with calories and macros
     7. **Export your data** as CSV when needed
 
     **Tips for better results:**

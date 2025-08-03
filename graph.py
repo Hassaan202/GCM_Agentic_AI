@@ -43,6 +43,10 @@ class AgentState(TypedDict):
     emergency_email: str
     id: str
     name: str
+    carbs_grams: float
+    protein_grams: float
+    fat_grams: float
+    routine_plan: str
 
 
 # --- LangGraph Nodes ---
@@ -184,6 +188,87 @@ def coach_node(state: AgentState):
         return {"messages": [response], "rag_complete": True}
 
 
+def routine_planning(state: AgentState):
+    # Convert the records back to DataFrame
+    df = pd.DataFrame(state["raw_patient_data"])
+
+    # Ensure time column is datetime
+    df['time'] = pd.to_datetime(df['time'])
+
+    # Normalize glucose column name
+    if 'gl' in df.columns and 'glucose' not in df.columns:
+        df['glucose'] = df['gl']
+    elif 'glucose' not in df.columns:
+        raise ValueError("No glucose data column found (expected 'glucose' or 'gl')")
+
+    # Now use 'glucose' consistently throughout
+    # Time-based glucose patterns
+    df['hour'] = df['time'].dt.hour
+    hourly_avg = df.groupby('hour')['glucose'].agg(['mean', 'std']).reset_index()
+
+    # Daily patterns
+    df['day_of_week'] = df['time'].dt.day_name()
+    daily_patterns = df.groupby('day_of_week')['glucose'].agg(['mean', 'min', 'max']).reset_index()
+
+    # Variability metrics
+    glucose_cv = (df['glucose'].std() / df['glucose'].mean()) * 100
+    time_in_range = ((df['glucose'] >= state["low_range"]) &
+                     (df['glucose'] <= state["high_range"])).mean() * 100
+
+    # Peak and low periods
+    high_risk_hours = hourly_avg[hourly_avg['mean'] > state["high_range"]]['hour'].tolist()
+    low_risk_hours = hourly_avg[hourly_avg['mean'] < state["low_range"]]['hour'].tolist()
+
+    # Recent trends (last 7 days)
+    recent_data = df[df['time'] >= df['time'].max() - pd.Timedelta(days=7)]
+    recent_avg = recent_data['glucose'].mean()
+
+    prompt = f"""
+    You are a Diabetes Routine Planning Assistant. Based on the patient's glycemic data and nutrition intake, 
+    create a personalized daily routine plan. There should be no recommendation for immediate glucose control.
+
+    Patient Information:
+    - Age: {state["age"]}
+    - Gender: {state["gender"]}
+    - Diabetes Proficiency: {state["diabetes_proficiency"]}
+    - Predicted glucose: {state["predicted_glucose"]:.1f} mg/dL
+    - Current glucose level: {state["glucose_level"]}
+
+    Nutrition Today:
+    - Carbs consumed: {state["carbs_grams"]:.1f}g
+    - Protein consumed: {state["protein_grams"]:.1f}g
+    - Fat consumed: {state["fat_grams"]:.1f}g
+
+    Glycemic Analysis:
+    - Time in Range: {time_in_range:.1f}%
+    - Glucose Variability (CV): {glucose_cv:.1f}%
+    - Recent 7-day average: {recent_avg:.1f} mg/dL
+    - High-risk hours: {high_risk_hours}
+    - Low-risk hours: {low_risk_hours}
+    - Best glucose control hours: {hourly_avg.nsmallest(3, 'std')['hour'].tolist()}
+
+    Daily Patterns:
+    {daily_patterns.to_string()}
+
+    Hourly Patterns:
+    {hourly_avg.to_string()}
+
+    Please provide:
+    1. Optimal meal timing based on glucose patterns
+    2. Exercise recommendations with timing
+    3. Medication/monitoring schedule suggestions
+    4. Sleep and stress management advice
+
+    Tailor advice to their diabetes proficiency level and current nutrition intake. Be very brief.
+    The response should be tailored to be displayed on a streamlit application and should only contain the 
+    routine plan and no other text. No main heading required. Only subheadings may be added.
+    """
+
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0.1)
+    response = llm.invoke([HumanMessage(content=prompt)])
+
+    return {"routine_plan": response.content}
+
 
 # --- Router Nodes ---
 def router_emergency(state: AgentState):
@@ -223,7 +308,7 @@ def notify_healthcare_provider(user_data_summary: str, emergency_email: str):
     """
     Notifies the healthcare provider about the medical situation of the person
     Args:
-        user_data_summary: the summary of username, ID, glucose data and risk level
+        user_data_summary: the summary of username, ID, glucose data and risk level to be used as email body
         emergency_email: the email of a known person
     """
     send_email(f"Emergency Notification", user_data_summary, emergency_email)
@@ -287,6 +372,7 @@ graph.add_node("Coach", coach_node)
 graph.add_node("Emergency", emergency_escalation_node)
 graph.add_node("Tools", ToolNode(tools=tools))
 graph.add_node("RagTools", ToolNode(tools=rag_tools))
+graph.add_node("routine_planning", routine_planning)
 
 
 # Set Flow
@@ -306,9 +392,10 @@ graph.add_conditional_edges(
     router_coaching_rag,
     {
         True: "RagTools",
-        False: END
+        False: "routine_planning"
     }
 )
+graph.add_edge("routine_planning", END)
 graph.add_edge("RagTools", "Coach")
 graph.add_conditional_edges(
     "Emergency",
