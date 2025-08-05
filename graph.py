@@ -1,4 +1,4 @@
-from typing import TypedDict, List, Union, Annotated, Sequence
+from typing import TypedDict, List, Union, Annotated, Sequence, Dict
 import pandas as pd
 import torch
 from langchain_core.messages import (HumanMessage, BaseMessage, SystemMessage, ToolMessage)
@@ -47,6 +47,7 @@ class AgentState(TypedDict):
     protein_grams: float
     fat_grams: float
     routine_plan: str
+    food_logs: List[Dict]
 
 
 # --- LangGraph Nodes ---
