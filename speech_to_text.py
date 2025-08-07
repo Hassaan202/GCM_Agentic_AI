@@ -1,23 +1,20 @@
 from faster_whisper import WhisperModel
-
+import streamlit as st
 
 model = WhisperModel("small", compute_type="int8")
 
 
 def transcribe_audio(fileName):
-    segments, info = model.transcribe("tmp.m4a")
-    finalText = ""
-    for segment in segments:
-        print(f"[{segment.start:.2f}s -> {segment.end:.2f}s] {segment.text}")
-        finalText += segment.text
+    try:
+        from faster_whisper import WhisperModel
+        model = WhisperModel("small", compute_type="int8")
 
-    return finalText
+        segments, info = model.transcribe(fileName)
+        final_text = ""
+        for segment in segments:
+            final_text += segment.text
 
-
-def main():
-    text = transcribe_audio("tmp.m4a")
-    # print(text)
-
-
-if __name__ == "__main__":
-    main()
+        return final_text.strip()
+    except Exception as e:
+        st.error(f"Error in transcription: {str(e)}")
+        return None

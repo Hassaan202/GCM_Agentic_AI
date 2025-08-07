@@ -55,6 +55,13 @@ result = graph.invoke({
     "high_range": 180,
     "messages": [],
     "rag_complete": False,
+    "age": 21,
+    "gender": "Male",
+    "diabetes_proficiency": "High",
+    "emergency_contact_number": "555-1201",
+    "emergency_email": "sarah.johnson@example.com",
+    "name": "Hassaan",
+    "id": "001"
 }, config)
 
 interrupts = result.get("__interrupt__", [])
@@ -75,6 +82,6 @@ print("📈 Trend Note:", result["trend_note"])
 if result.get("emergency", False):
     print("🚦 Emergency Management:\n", result["emergency_response"])
 
-pprint.pprint(result["messages"])
+# pprint.pprint(result["messages"])
 
 print("🧠 Advice:\n", result["advice"])

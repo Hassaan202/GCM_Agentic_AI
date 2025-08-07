@@ -1,33 +1,23 @@
-import os
-from typing import TypedDict, List, Union, Annotated, Sequence
+from typing import TypedDict, List, Union, Annotated, Sequence, Dict
 import pandas as pd
 import torch
-from IPython.core.display import Image
-from IPython.core.display_functions import display
-from langchain_community.vectorstores import Chroma
-from langchain_core.messages import (HumanMessage, AIMessage, BaseMessage, SystemMessage, ToolMessage,
-                                     messages_to_dict,
-                                     messages_from_dict)
+from langchain_core.messages import (HumanMessage, BaseMessage, SystemMessage, ToolMessage)
 from langchain_core.tools import tool, InjectedToolCallId
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langgraph.graph.message import add_messages
 from langgraph.prebuilt import ToolNode
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langgraph.graph import StateGraph, START, END
 from dotenv import load_dotenv
-from langchain_core.runnables.graph import CurveStyle, MermaidDrawMethod, NodeStyles
-import playwright
 
 from predictor import predict_glucose
 from langgraph.types import Command, interrupt
 from langgraph.checkpoint.memory import MemorySaver
 from rag import get_retriever
-
+from send_email import send_email
 
 memory = MemorySaver()
 
 load_dotenv()
-# print(user_agent)
 
 
 # --- Define state structure ---
@@ -46,6 +36,18 @@ class AgentState(TypedDict):
     user_input: str
     rag_complete: bool
     emergency_response: str
+    age: int
+    gender: str
+    diabetes_proficiency: str
+    emergency_contact_number: str
+    emergency_email: str
+    id: str
+    name: str
+    carbs_grams: float
+    protein_grams: float
+    fat_grams: float
+    routine_plan: str
+    food_logs: List[Dict]
 
 
 # --- LangGraph Nodes ---
@@ -90,8 +92,11 @@ def emergency_escalation_node(state: AgentState):
                               f"the user input from the last tool call, see if user and replies positively (like yes, please etc.) and wants to "
                               f"notify the healthcare provider, ONLY then call the `notify_healthcare_provider` tool with "
                               f"appropriate the user summary using the data: Predicted: {state["predicted_glucose"]},"
-                              f" Glucose Level: {state["glucose_level"]}. If the user does not wants to inform the "
-                              f"healthcare provider then DONNOT call the `notify_healthcare_provider` tool and "
+                              f" Glucose Level: {state["glucose_level"]}, name: {state["name"]}, id: {state["id"]}. "
+                              f"also pass the emergency email:"
+                              f" {state["emergency_email"]} as an argument."
+                              f"If the user does not wants to inform the healthcare provider then DONNOT call the"
+                              f" `notify_healthcare_provider` tool and "
                               f"reply with the user intent and condition summary."
                               f"Current message history: {state['messages']}"),
     ]
@@ -99,7 +104,7 @@ def emergency_escalation_node(state: AgentState):
     user_text = state.get("user_input", "You are a helpful agent.")
     messages += [HumanMessage(content=user_text)]
 
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1).bind_tools(tools)
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0.1).bind_tools(tools)
     response = llm.invoke(messages)
 
     if not hasattr(messages[-1], "tool_calls"):
@@ -107,7 +112,6 @@ def emergency_escalation_node(state: AgentState):
             "messages": [response],
             "emergency_response": response.content
         }
-
 
     return {"messages": [response]}
 
@@ -146,6 +150,9 @@ def coach_node(state: AgentState):
         recommendations and provide text with newlines.
 
         Patient Information:
+        - Age: {state["age"]}
+        - Gender: {state["gender"]}
+        - Diabetes Proficiency: {state["diabetes_proficiency"]}
         - Predicted glucose: {state["predicted_glucose"]:.1f} mg/dL
         - Emergency: {state["emergency"]} 
         - Glucose level: {state["glucose_level"]}
@@ -156,9 +163,10 @@ def coach_node(state: AgentState):
 
         Please provide specific, actionable advice based on this information to manage the current glucose 
         level. Make sure to give correct advice if emergency hyper or hypoglycemia. Do not ask follow-up questions. 
+        Also, the information provided should be understandable to the user based on their diabetes proficiency level. 
         """
 
-        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1)
+        llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0.1)
         response = llm.invoke([HumanMessage(content=prompt)])
 
         return {"advice": response.content, "rag_complete": False}
@@ -175,11 +183,92 @@ def coach_node(state: AgentState):
         Make the query appropriate for retrieval from a vector store.
         """
 
-        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2).bind_tools(rag_tools)
+        llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0.2).bind_tools(rag_tools)
         response = llm.invoke([HumanMessage(content=prompt)])
 
         return {"messages": [response], "rag_complete": True}
 
+
+def routine_planning(state: AgentState):
+    # Convert the records back to DataFrame
+    df = pd.DataFrame(state["raw_patient_data"])
+
+    # Ensure time column is datetime
+    df['time'] = pd.to_datetime(df['time'])
+
+    # Normalize glucose column name
+    if 'gl' in df.columns and 'glucose' not in df.columns:
+        df['glucose'] = df['gl']
+    elif 'glucose' not in df.columns:
+        raise ValueError("No glucose data column found (expected 'glucose' or 'gl')")
+
+    # Now use 'glucose' consistently throughout
+    # Time-based glucose patterns
+    df['hour'] = df['time'].dt.hour
+    hourly_avg = df.groupby('hour')['glucose'].agg(['mean', 'std']).reset_index()
+
+    # Daily patterns
+    df['day_of_week'] = df['time'].dt.day_name()
+    daily_patterns = df.groupby('day_of_week')['glucose'].agg(['mean', 'min', 'max']).reset_index()
+
+    # Variability metrics
+    glucose_cv = (df['glucose'].std() / df['glucose'].mean()) * 100
+    time_in_range = ((df['glucose'] >= state["low_range"]) &
+                     (df['glucose'] <= state["high_range"])).mean() * 100
+
+    # Peak and low periods
+    high_risk_hours = hourly_avg[hourly_avg['mean'] > state["high_range"]]['hour'].tolist()
+    low_risk_hours = hourly_avg[hourly_avg['mean'] < state["low_range"]]['hour'].tolist()
+
+    # Recent trends (last 7 days)
+    recent_data = df[df['time'] >= df['time'].max() - pd.Timedelta(days=7)]
+    recent_avg = recent_data['glucose'].mean()
+
+    prompt = f"""
+    You are a Diabetes Routine Planning Assistant. Based on the patient's glycemic data and nutrition intake, 
+    create a personalized daily routine plan. There should be no recommendation for immediate glucose control.
+
+    Patient Information:
+    - Age: {state["age"]}
+    - Gender: {state["gender"]}
+    - Diabetes Proficiency: {state["diabetes_proficiency"]}
+    - Predicted glucose: {state["predicted_glucose"]:.1f} mg/dL
+    - Current glucose level: {state["glucose_level"]}
+
+    Nutrition Today:
+    - Carbs consumed: {state["carbs_grams"]:.1f}g
+    - Protein consumed: {state["protein_grams"]:.1f}g
+    - Fat consumed: {state["fat_grams"]:.1f}g
+
+    Glycemic Analysis:
+    - Time in Range: {time_in_range:.1f}%
+    - Glucose Variability (CV): {glucose_cv:.1f}%
+    - Recent 7-day average: {recent_avg:.1f} mg/dL
+    - High-risk hours: {high_risk_hours}
+    - Low-risk hours: {low_risk_hours}
+    - Best glucose control hours: {hourly_avg.nsmallest(3, 'std')['hour'].tolist()}
+
+    Daily Patterns:
+    {daily_patterns.to_string()}
+
+    Hourly Patterns:
+    {hourly_avg.to_string()}
+
+    Please provide:
+    1. Optimal meal timing based on glucose patterns
+    2. Exercise recommendations with timing
+    3. Medication/monitoring schedule suggestions
+    4. Sleep and stress management advice
+
+    Tailor advice to their diabetes proficiency level and current nutrition intake. Be very brief.
+    The response should be tailored to be displayed on a streamlit application and should only contain the 
+    routine plan and no other text. No main heading required. Only subheadings may be added.
+    """
+
+    llm = ChatGoogleGenerativeAI(model="gemini-2.5-pro", temperature=0.1)
+    response = llm.invoke([HumanMessage(content=prompt)])
+
+    return {"routine_plan": response.content}
 
 
 # --- Router Nodes ---
@@ -192,9 +281,6 @@ def router_info(state: AgentState):
         return False
 
     last_message = state["messages"][-1]
-    # print(f"DEBUG: Last message type: {type(last_message)}")
-    # print(f"DEBUG: Has tool_calls attr: {hasattr(last_message, 'tool_calls')}")
-    # print(f"DEBUG: tool_calls value: {getattr(last_message, 'tool_calls', 'NO ATTR')}")
 
     # Check if the last message has tool calls and they're not empty
     if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
@@ -219,13 +305,14 @@ def router_coaching_rag(state: AgentState):
 
 # --- Tool Nodes ---
 @tool
-def notify_healthcare_provider(user_data_summary: str):
+def notify_healthcare_provider(user_data_summary: str, emergency_email: str):
     """
     Notifies the healthcare provider about the medical situation of the person
     Args:
-        user_data_summary: the summary of user glucose data and risk level
+        user_data_summary: the summary of username, ID, glucose data and risk level to be used as email body
+        emergency_email: the email of a known person
     """
-    # TODO: Add some mechanism to inform the healthcare provider about the situation
+    send_email(f"Emergency Notification", user_data_summary, emergency_email)
     return f"The healthcare provider has been informed! Meanwhile perform some precautionary measures."
 
 
@@ -286,6 +373,7 @@ graph.add_node("Coach", coach_node)
 graph.add_node("Emergency", emergency_escalation_node)
 graph.add_node("Tools", ToolNode(tools=tools))
 graph.add_node("RagTools", ToolNode(tools=rag_tools))
+graph.add_node("routine_planning", routine_planning)
 
 
 # Set Flow
@@ -305,9 +393,10 @@ graph.add_conditional_edges(
     router_coaching_rag,
     {
         True: "RagTools",
-        False: END
+        False: "routine_planning"
     }
 )
+graph.add_edge("routine_planning", END)
 graph.add_edge("RagTools", "Coach")
 graph.add_conditional_edges(
     "Emergency",
