@@ -1,7 +1,4 @@
 import streamlit as st
-import sounddevice as sd
-import soundfile as sf
-import numpy as np
 from datetime import datetime
 import pandas as pd
 import os
@@ -9,6 +6,8 @@ import google.generativeai as genai
 import json
 from speech_to_text import transcribe_audio
 from dotenv import load_dotenv
+from pathlib import Path
+from streamlit_webrtc import webrtc_streamer
 
 load_dotenv()
 
@@ -46,30 +45,15 @@ if 'session_protein' not in st.session_state:
     st.session_state.session_protein = 0.0
 
 
-def record_audio(duration=5, sample_rate=44100):
+def record_audio():
     """Record audio for specified duration"""
     try:
-        st.info(f"🎤 Recording for {duration} seconds... Speak now!")
-        audio_data = sd.rec(int(duration * sample_rate),
-                            samplerate=sample_rate,
-                            channels=1,
-                            dtype=np.float32)
-        sd.wait()  # Wait until recording is finished
-        return audio_data, sample_rate
+        audio_data = st.audio_input("Record a voice message")
+        return audio_data
     except Exception as e:
         st.error(f"Error recording audio: {str(e)}")
-        return None, None
-
-
-def save_audio(audio_data, sample_rate, filename="tmp.m4a"):
-    """Save audio data to file"""
-    try:
-        temp_wav = "temp_recording.wav"
-        sf.write(temp_wav, audio_data, sample_rate)
-        return temp_wav
-    except Exception as e:
-        st.error(f"Error saving audio: {str(e)}")
         return None
+
 
 
 def process_food_with_gemini(transcribed_text):
@@ -234,9 +218,6 @@ def main():
         st.write(f"👤 Welcome, {st.session_state.get('patient_name', 'Patient')}")
         st.write(f"ID: {st.session_state.get('patient_id', '')}")
 
-        st.sidebar.header("Recording Settings")
-        duration = st.sidebar.slider("Recording Duration (seconds)", 1, 15, 4)
-
         current_api_key = os.environ.get("GOOGLE_API_KEY", "")
         current_sender_email = st.session_state.sender_email if st.session_state.sender_email else ""
         current_sender_app_password = st.session_state.sender_app_password if st.session_state.sender_app_password else ""
@@ -304,23 +285,22 @@ def main():
 
             st.session_state.recording = True
 
+            AUDIO_SAVE_PATH = "audio_responses"
+            os.makedirs(AUDIO_SAVE_PATH, exist_ok=True)
+
             # Record audio
-            audio_data, sample_rate = record_audio(duration)
+            audio_data = record_audio()
 
             if audio_data is not None:
-                # Save audio file
-                audio_file = save_audio(audio_data, sample_rate)
+                    st.audio(audio_data)
+                    audio_save_path = os.path.join(AUDIO_SAVE_PATH, "recorded_response.wav")
+                    with open(audio_save_path, "wb") as f:
+                        f.write(audio_data.getbuffer())
 
-                if audio_file:
-                    st.success("✅ Recording completed!")
-
-                    # Play back the recording
-                    st.audio(audio_file)
-
-                    # Transcribe audio
+                        # Transcribe audio
                     with st.spinner("🔄 Transcribing audio..."):
                         try:
-                            transcribed_text = transcribe_audio(audio_file)
+                            transcribed_text = transcribe_audio(audio_save_path)
 
                             if transcribed_text:
                                 st.success("✅ Transcription completed!")
@@ -337,8 +317,8 @@ def main():
                                         st.warning("No food items detected. Please try again with clearer speech.")
 
                                 # Clean up temporary file
-                                if os.path.exists(audio_file):
-                                    os.remove(audio_file)
+                                if os.path.exists(audio_save_path):
+                                    os.remove(audio_save_path)
                             else:
                                 st.warning("No speech detected. Please try again.")
                         except Exception as e:
