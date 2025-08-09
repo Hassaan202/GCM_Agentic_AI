@@ -20,5 +20,3 @@ beautifulsoup4
 langchain-text-splitters
 darts
 langchain
-langchain_chroma
-pysqlite3-binary
