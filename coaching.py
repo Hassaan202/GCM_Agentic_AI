@@ -8,9 +8,16 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+if 'google_api_key' not in st.session_state:
+    st.session_state.google_api_key = os.environ.get("GOOGLE_API_KEY", "")
+if 'sender_email' not in st.session_state:
+    st.session_state.sender_email = ""
+if "sender_app_password" not in st.session_state:
+    st.session_state.sender_app_password = ""
+
 # Configure Gemini AI
 try:
-    genai.configure(api_key=os.getenv('GEMINI_API_KEY'))
+    genai.configure(api_key=st.session_state.google_api_key)
     model = genai.GenerativeModel('gemini-2.5-flash')
 except Exception as e:
     st.error(f"Failed to configure Gemini AI: {e}")
@@ -208,6 +215,46 @@ with st.sidebar:
 
     st.markdown("---")
 
+    current_api_key = os.environ.get("GOOGLE_API_KEY", "")
+    current_sender_email = st.session_state.sender_email if st.session_state.sender_email else ""
+    current_sender_app_password = st.session_state.sender_app_password if st.session_state.sender_app_password else ""
+
+
+    api_key = st.text_input(
+        "Gemini API Key",
+        value=current_api_key if current_api_key else "",
+        type="password",
+        help="Enter your Google Gemini API key"
+    )
+
+    # Set environment variable when key is provided
+    if api_key:
+        os.environ["GOOGLE_API_KEY"] = api_key
+        st.session_state.google_api_key = api_key
+        st.success("✅ User provided API key configured")
+
+    sender_email = st.text_input(
+        "Sender Email",
+        value=current_sender_email if current_sender_email else "",
+        type="default",
+        help="Enter your Email to use for reporting to emergency email contact"
+    )
+
+    if sender_email:
+        st.session_state.sender_email = sender_email
+        st.success("✅ Sender Email configured")
+
+    sender_app_password = st.text_input(
+        "Sender App Password",
+        value=current_sender_app_password if current_sender_app_password else "",
+        type="password",
+        help="Enter your App Password from your gmail account"
+    )
+
+    if sender_app_password:
+        st.session_state.sender_app_password = sender_app_password
+        st.success("✅ Sender app password configured")
+
     # Quick action buttons
     st.subheader("🚀 Quick Actions")
     if st.button("📈 View Main Dashboard"):
@@ -225,6 +272,9 @@ with st.sidebar:
         st.session_state.session_protein = 0.0
         st.session_state.food_logs = []
         st.session_state.chat_messages = []
+        st.session_state.google_api_key = None
+        st.session_state.sender_email = None
+        st.session_state.sender_app_password = None
         st.switch_page("login.py")
 
 # Main chat interface
