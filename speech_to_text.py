@@ -3,7 +3,6 @@ import streamlit as st
 
 model = WhisperModel("small", compute_type="int8")
 
-
 def transcribe_audio(fileName):
     try:
         from faster_whisper import WhisperModel

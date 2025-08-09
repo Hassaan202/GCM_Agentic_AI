@@ -13,14 +13,19 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Configure Gemini API
-GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY")
+if 'google_api_key' not in st.session_state:
+    st.session_state.google_api_key = os.environ.get("GOOGLE_API_KEY", "")
+if 'sender_email' not in st.session_state:
+    st.session_state.sender_email = ""
+if "sender_app_password" not in st.session_state:
+    st.session_state.sender_app_password = ""
 
 if not st.session_state.get("logged_in", False):
     st.error("❌ Please log in to access this page")
     st.stop()
 
-if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+if st.session_state.google_api_key:
+    genai.configure(api_key=st.session_state.google_api_key)
     model = genai.GenerativeModel('gemini-2.5-pro')
 
 # Initialize session state
@@ -69,7 +74,7 @@ def save_audio(audio_data, sample_rate, filename="tmp.m4a"):
 
 def process_food_with_gemini(transcribed_text):
     """Use Gemini API to extract food items with calories and macronutrients"""
-    if not GEMINI_API_KEY:
+    if not st.session_state.google_api_key:
         st.error("Gemini API key not configured. Please add your API key.")
         return None
 
@@ -217,7 +222,7 @@ def main():
     st.markdown("Record what you eat and get automatic calorie tracking using AI!")
 
     # API Key configuration
-    if not GEMINI_API_KEY:
+    if not st.session_state.google_api_key:
         st.warning("⚠️ Gemini API key not configured. Please add your API key to use AI food analysis.")
         api_key_input = st.text_input("Enter your Gemini API Key:", type="password")
         if api_key_input:
@@ -232,6 +237,45 @@ def main():
         st.sidebar.header("Recording Settings")
         duration = st.sidebar.slider("Recording Duration (seconds)", 1, 15, 4)
 
+        current_api_key = os.environ.get("GOOGLE_API_KEY", "")
+        current_sender_email = st.session_state.sender_email if st.session_state.sender_email else ""
+        current_sender_app_password = st.session_state.sender_app_password if st.session_state.sender_app_password else ""
+
+        api_key = st.text_input(
+            "Gemini API Key",
+            value=current_api_key if current_api_key else "",
+            type="password",
+            help="Enter your Google Gemini API key"
+        )
+
+        # Set environment variable when key is provided
+        if api_key:
+            os.environ["GOOGLE_API_KEY"] = api_key
+            st.session_state.google_api_key = api_key
+            st.success("✅ User provided API key configured")
+
+        sender_email = st.text_input(
+            "Sender Email",
+            value=current_sender_email if current_sender_email else "",
+            type="default",
+            help="Enter your Email to use for reporting to emergency email contact"
+        )
+
+        if sender_email:
+            st.session_state.sender_email = sender_email
+            st.success("✅ Sender Email configured")
+
+        sender_app_password = st.text_input(
+            "Sender App Password",
+            value=current_sender_app_password if current_sender_app_password else "",
+            type="password",
+            help="Enter your App Password from your gmail account"
+        )
+
+        if sender_app_password:
+            st.session_state.sender_app_password = sender_app_password
+            st.success("✅ Sender app password configured")
+
         if st.button("🚪 Logout", type="secondary"):
             st.session_state.logged_in = False
             st.session_state.patient_id = None
@@ -241,6 +285,9 @@ def main():
             st.session_state.session_fats = 0.0
             st.session_state.session_protein = 0.0
             st.session_state.food_logs = []
+            st.session_state.google_api_key = None
+            st.session_state.sender_email = None
+            st.session_state.sender_app_password = None
             st.rerun()
 
     # Main interface
@@ -251,7 +298,7 @@ def main():
 
         # Recording button
         if st.button("🎤 Start Recording", disabled=st.session_state.recording):
-            if not GEMINI_API_KEY:
+            if not st.session_state.google_api_key:
                 st.error("Please configure Gemini API key first.")
                 return
 

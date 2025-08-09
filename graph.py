@@ -19,7 +19,6 @@ memory = MemorySaver()
 
 load_dotenv()
 
-
 # --- Define state structure ---
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
@@ -40,7 +39,6 @@ class AgentState(TypedDict):
     gender: str
     diabetes_proficiency: str
     emergency_contact_number: str
-    emergency_email: str
     id: str
     name: str
     carbs_grams: float
@@ -48,6 +46,10 @@ class AgentState(TypedDict):
     fat_grams: float
     routine_plan: str
     food_logs: List[Dict]
+    # must retrieve the app password from the gmail account
+    sender_email: str
+    sender_account_app_password: str
+    emergency_email: str
 
 
 # --- LangGraph Nodes ---
@@ -305,15 +307,17 @@ def router_coaching_rag(state: AgentState):
 
 # --- Tool Nodes ---
 @tool
-def notify_healthcare_provider(user_data_summary: str, emergency_email: str):
+def notify_healthcare_provider(user_data_summary: str, sender_email: str, app_password: str, emergency_email: str):
     """
     Notifies the healthcare provider about the medical situation of the person
     Args:
         user_data_summary: the summary of username, ID, glucose data and risk level to be used as email body
         emergency_email: the email of a known person
+        sender_email: the email of the sender person
+        app_password: the app password of the sender's email
     """
-    send_email(f"Emergency Notification", user_data_summary, emergency_email)
-    return f"The healthcare provider has been informed! Meanwhile perform some precautionary measures."
+    result = send_email(f"Emergency Notification", user_data_summary, sender_email, app_password, emergency_email)
+    return result
 
 
 @tool

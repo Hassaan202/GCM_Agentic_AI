@@ -1,21 +1,25 @@
 import streamlit as st
 import pandas as pd
-import matplotlib.pyplot as plt
 import torch
-import glob
 import os
-from langchain_core.messages import ToolMessage, HumanMessage
-from pandas.core.interchange.dataframe_protocol import DataFrame
 from sklearn.preprocessing import MinMaxScaler
 from graph import graph
-from langgraph.types import Command, interrupt
-from datetime import datetime
+from langgraph.types import Command
 import plotly.express as px
 import plotly.graph_objects as go
+
 
 if not st.session_state.get("logged_in", False):
     st.error("❌ Please log in to access this page")
     st.stop()
+
+if 'google_api_key' not in st.session_state:
+    st.session_state.google_api_key = os.environ.get("GOOGLE_API_KEY", "")
+if 'sender_email' not in st.session_state:
+    st.session_state.sender_email = ""
+if "sender_app_password" not in st.session_state:
+    st.session_state.sender_app_password = ""
+
 
 # ------------------------
 # Configuration
@@ -55,7 +59,7 @@ if 'food_logs' not in st.session_state:
     st.session_state.food_logs = []
 
 # Sidebar for configuration
-with st.sidebar:
+with (((st.sidebar))):
     st.write(f"👤 Welcome, {st.session_state.get('patient_name', 'Patient')}")
     st.write(f"ID: {st.session_state.get('patient_id', '')}")
 
@@ -72,6 +76,50 @@ with st.sidebar:
         total_calories = sum(item['total_calories'] for item in st.session_state.food_logs)
         st.metric("Total Calories", f"{total_calories:.0f}")
 
+    st.header("🔑 API Configuration")
+
+    # Check if API key is already set
+    current_api_key = os.environ.get("GOOGLE_API_KEY", "")
+    current_sender_email = st.session_state.sender_email if "sender_email" in st.session_state else ""
+    current_sender_app_password = st.session_state.sender_app_password if "sender_app_password" in st.session_state else ""
+
+    # API key input
+    api_key = st.text_input(
+        "Gemini API Key",
+        value=current_api_key if current_api_key else "",
+        type="password",
+        help="Enter your Google Gemini API key"
+    )
+
+    # Set environment variable when key is provided
+    if api_key:
+        os.environ["GOOGLE_API_KEY"] = api_key
+        st.session_state.google_api_key = api_key
+        st.success("✅ User provided API key configured")
+
+    sender_email = st.text_input(
+        "Sender Email",
+        value=current_sender_email if current_sender_email else "",
+        type="default",
+        help="Enter your Email to use for reporting to emergency email contact"
+    )
+
+    if sender_email:
+        st.session_state.sender_email = sender_email
+        st.success("✅ Sender Email configured")
+
+    sender_app_password = st.text_input(
+        "Sender App Password",
+        value=current_sender_app_password if current_sender_app_password else "",
+        type="password",
+        help="Enter your App Password from your gmail account"
+    )
+
+    if sender_app_password:
+        st.session_state.sender_app_password = sender_app_password
+        st.success("✅ Sender app password configured")
+
+
     if st.button("🚪 Logout", type="secondary"):
         st.session_state.logged_in = False
         st.session_state.patient_id = None
@@ -80,10 +128,18 @@ with st.sidebar:
         st.session_state.session_fats = 0.0
         st.session_state.session_protein = 0.0
         st.session_state.food_logs = []
+        st.session_state.google_api_key = None
+        st.session_state.sender_email = None
+        st.session_state.sender_app_password = None
         st.rerun()
 
 # Get current user's patient ID
 current_patient_id = st.session_state.get('patient_id', '')
+
+def check_api_key():
+    if not os.environ.get("GEMINI_API_KEY"):
+        st.error("❌ Please configure your Gemini API key in the sidebar")
+        st.stop()
 
 df = ""
 
@@ -279,6 +335,7 @@ if cgm_df is not None and data_found:
     # Analysis state management
     if st.session_state.analysis_state == 'idle':
         if st.button("🚀 Run Advanced Analysis", type="primary"):
+            # check_api_key()
             st.session_state.analysis_state = 'running'
             st.rerun()
 
@@ -316,8 +373,7 @@ if cgm_df is not None and data_found:
                     patient_bio_df = pd.read_csv("user_data/patient_profiles.csv")
                     patient_bio_data = get_patient_data(current_patient_id, patient_bio_df) # the user data row
 
-                    # Run the graph analysis
-                    result = graph.invoke({
+                    graph_params = {
                         "patient_id": current_patient_id,
                         "input_tensor": input_tensor.tolist(),
                         "raw_patient_data": patient_data.to_dict(orient="records"),
@@ -336,7 +392,21 @@ if cgm_df is not None and data_found:
                         "protein_grams": st.session_state.session_protein,
                         "fat_grams": st.session_state.session_fats,
                         "food_logs": st.session_state.food_logs
-                    }, config)
+                    }
+
+                    if current_sender_email and current_sender_app_password:
+                        graph_params.update({
+                            "sender_email": current_sender_email,
+                            "sender_account_app_password": current_sender_app_password
+                        })
+                    else:
+                        graph_params.update({
+                            "sender_email": None,
+                            "sender_account_app_password": None
+                        })
+
+                    # Run the graph analysis
+                    result = graph.invoke(graph_params, config)
 
                     # Handle user input
                     interrupts = result.get("__interrupt__", [])
