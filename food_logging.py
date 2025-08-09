@@ -277,54 +277,47 @@ def main():
     with col1:
         st.subheader("Record Your Food")
 
-        # Recording button
-        if st.button("🎤 Start Recording", disabled=st.session_state.recording):
-            if not st.session_state.google_api_key:
-                st.error("Please configure Gemini API key first.")
-                return
+        st.session_state.recording = True
 
-            st.session_state.recording = True
+        AUDIO_SAVE_PATH = "audio_responses"
+        os.makedirs(AUDIO_SAVE_PATH, exist_ok=True)
 
-            AUDIO_SAVE_PATH = "audio_responses"
-            os.makedirs(AUDIO_SAVE_PATH, exist_ok=True)
+        # Record audio
+        audio_data = record_audio()
 
-            # Record audio
-            audio_data = record_audio()
+        if audio_data is not None:
+                audio_save_path = os.path.join(AUDIO_SAVE_PATH, "recorded_response.wav")
+                with open(audio_save_path, "wb") as f:
+                    f.write(audio_data.getbuffer())
 
-            if audio_data is not None:
-                    st.audio(audio_data)
-                    audio_save_path = os.path.join(AUDIO_SAVE_PATH, "recorded_response.wav")
-                    with open(audio_save_path, "wb") as f:
-                        f.write(audio_data.getbuffer())
+                    # Transcribe audio
+                with st.spinner("🔄 Transcribing audio..."):
+                    try:
+                        transcribed_text = transcribe_audio(audio_save_path)
 
-                        # Transcribe audio
-                    with st.spinner("🔄 Transcribing audio..."):
-                        try:
-                            transcribed_text = transcribe_audio(audio_save_path)
+                        if transcribed_text:
+                            st.success("✅ Transcription completed!")
+                            st.write("**Transcribed text:**", transcribed_text)
 
-                            if transcribed_text:
-                                st.success("✅ Transcription completed!")
-                                st.write("**Transcribed text:**", transcribed_text)
+                            # Process with Gemini
+                            with st.spinner("🤖 Analyzing food items with AI..."):
+                                food_items = process_food_with_gemini(transcribed_text)
 
-                                # Process with Gemini
-                                with st.spinner("🤖 Analyzing food items with AI..."):
-                                    food_items = process_food_with_gemini(transcribed_text)
+                                if food_items:
+                                    st.success("✅ Food analysis completed!")
+                                    st.session_state.pending_food_items = food_items
+                                else:
+                                    st.warning("No food items detected. Please try again with clearer speech.")
 
-                                    if food_items:
-                                        st.success("✅ Food analysis completed!")
-                                        st.session_state.pending_food_items = food_items
-                                    else:
-                                        st.warning("No food items detected. Please try again with clearer speech.")
+                            # Clean up temporary file
+                            if os.path.exists(audio_save_path):
+                                os.remove(audio_save_path)
+                        else:
+                            st.warning("No speech detected. Please try again.")
+                    except Exception as e:
+                        st.error(f"Error processing audio: {str(e)}")
 
-                                # Clean up temporary file
-                                if os.path.exists(audio_save_path):
-                                    os.remove(audio_save_path)
-                            else:
-                                st.warning("No speech detected. Please try again.")
-                        except Exception as e:
-                            st.error(f"Error processing audio: {str(e)}")
-
-            st.session_state.recording = False
+        st.session_state.recording = False
 
     with col2:
         st.subheader("Quick Stats")

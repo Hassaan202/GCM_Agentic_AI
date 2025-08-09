@@ -22,3 +22,4 @@ darts
 langchain
 google-generativeai
 streamlit_webrtc
+streamlit_audiorecorder
