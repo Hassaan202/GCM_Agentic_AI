@@ -14,7 +14,7 @@ if not st.session_state.get("logged_in", False):
     st.stop()
 
 if 'google_api_key' not in st.session_state:
-    st.session_state.google_api_key = os.environ.get("GOOGLE_API_KEY", "")
+    st.session_state.google_api_key = ""
 if 'sender_email' not in st.session_state:
     st.session_state.sender_email = ""
 if "sender_app_password" not in st.session_state:
@@ -59,7 +59,7 @@ if 'food_logs' not in st.session_state:
     st.session_state.food_logs = []
 
 # Sidebar for configuration
-with (((st.sidebar))):
+with (st.sidebar):
     st.write(f"👤 Welcome, {st.session_state.get('patient_name', 'Patient')}")
     st.write(f"ID: {st.session_state.get('patient_id', '')}")
 

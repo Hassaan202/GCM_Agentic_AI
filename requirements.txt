@@ -11,8 +11,6 @@ python-dotenv
 langchain-community
 langchain-google-genai
 protobuf
-sounddevice
-soundfile
 numpy
 faster-whisper
 bs4

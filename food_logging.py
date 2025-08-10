@@ -6,8 +6,6 @@ import google.generativeai as genai
 import json
 from speech_to_text import transcribe_audio
 from dotenv import load_dotenv
-from pathlib import Path
-from streamlit_webrtc import webrtc_streamer
 
 load_dotenv()
 
@@ -44,16 +42,103 @@ if 'session_fats' not in st.session_state:
 if 'session_protein' not in st.session_state:
     st.session_state.session_protein = 0.0
 
+# Add audio processing state tracking
+if 'current_audio_data' not in st.session_state:
+    st.session_state.current_audio_data = None
+if 'last_transcription' not in st.session_state:
+    st.session_state.last_transcription = ""
+if 'processing_complete' not in st.session_state:
+    st.session_state.processing_complete = False
+if 'audio_processed' not in st.session_state:
+    st.session_state.audio_processed = False
+if 'session_id' not in st.session_state:
+    st.session_state.session_id = 0
+if 'items_cleared' not in st.session_state:
+    st.session_state.items_cleared = False
+
 
 def record_audio():
     """Record audio for specified duration"""
     try:
-        audio_data = st.audio_input("Record a voice message")
+        audio_data = st.audio_input("🎤 Record what you ate")
         return audio_data
     except Exception as e:
         st.error(f"Error recording audio: {str(e)}")
         return None
 
+
+def should_process_audio(audio_data):
+    """Determine if audio should be processed based on session state"""
+    if audio_data is None:
+        return False
+
+    # If no current audio data stored, this is new
+    if st.session_state.current_audio_data is None:
+        return True
+
+    # If audio data has changed, process it
+    if audio_data.getbuffer().nbytes != st.session_state.current_audio_data.getbuffer().nbytes:
+        return True
+
+    # If audio exists but hasn't been processed yet AND we haven't cleared pending items
+    if not st.session_state.audio_processed and not st.session_state.get('items_cleared', False):
+        return True
+
+    return False
+
+
+def process_new_audio(audio_data):
+    """Process new audio recording"""
+    if not should_process_audio(audio_data):
+        return False
+
+    # Update session state for new audio
+    st.session_state.current_audio_data = audio_data
+    st.session_state.audio_processed = False
+    st.session_state.processing_complete = False
+    st.session_state.session_id += 1  # Increment for unique keys
+    st.session_state.items_cleared = False  # Reset cleared flag
+
+    AUDIO_SAVE_PATH = "audio_responses"
+    os.makedirs(AUDIO_SAVE_PATH, exist_ok=True)
+
+    try:
+        audio_save_path = os.path.join(AUDIO_SAVE_PATH, f"recorded_response_{st.session_state.session_id}.wav")
+        with open(audio_save_path, "wb") as f:
+            f.write(audio_data.getbuffer())
+
+        # Transcribe audio
+        with st.spinner("🔄 Transcribing audio..."):
+            transcribed_text = transcribe_audio(audio_save_path)
+
+            if transcribed_text:
+                st.session_state.last_transcription = transcribed_text
+                st.success("✅ Transcription completed!")
+                st.write("**Transcribed text:**", transcribed_text)
+
+                # Process with Gemini
+                with st.spinner("🤖 Analyzing food items with AI..."):
+                    food_items = process_food_with_gemini(transcribed_text)
+
+                    if food_items:
+                        st.success("✅ Food analysis completed!")
+                        st.session_state.pending_food_items = food_items
+                        st.session_state.processing_complete = True
+                        st.session_state.audio_processed = True
+                    else:
+                        st.warning("No food items detected. Please try again with clearer speech.")
+
+                # Clean up temporary file
+                if os.path.exists(audio_save_path):
+                    os.remove(audio_save_path)
+                return True
+            else:
+                st.warning("No speech detected. Please try again.")
+                return False
+
+    except Exception as e:
+        st.error(f"Error processing audio: {str(e)}")
+        return False
 
 
 def process_food_with_gemini(transcribed_text):
@@ -135,8 +220,6 @@ def display_food_confirmation(food_items):
     if not food_items:
         return []
 
-    confirmed_items = []
-
     st.subheader("🍎 Confirm Food Items")
     st.write("Please confirm the detected food items and enter serving quantities:")
 
@@ -159,7 +242,7 @@ def display_food_confirmation(food_items):
                     max_value=50.0,
                     value=1.0,
                     step=0.1,
-                    key=f"serving_{i}"
+                    key=f"serving_{i}_session_{st.session_state.session_id}"
                 )
 
             with col3:
@@ -174,7 +257,7 @@ def display_food_confirmation(food_items):
                 st.metric("Total Protein", f"{total_protein:.1f}g")
 
             # Add confirm button for each item
-            if st.button(f"✅ Add {item['food_name']}", key=f"confirm_{i}"):
+            if st.button(f"✅ Add {item['food_name']}", key=f"confirm_{i}_session_{st.session_state.session_id}"):
                 confirmed_item = {
                     'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                     'food_name': item['food_name'],
@@ -197,8 +280,26 @@ def display_food_confirmation(food_items):
                 st.session_state.session_protein += total_protein
 
                 st.success(f"✅ Added {item['food_name']} to your food log!")
+                st.rerun()
 
-    return confirmed_items
+
+def reset_audio_session():
+    """Reset audio processing session state"""
+    # Don't reset current_audio_data to prevent re-processing same audio
+    st.session_state.last_transcription = ""
+    st.session_state.processing_complete = False
+    st.session_state.pending_food_items = []
+    st.session_state.items_cleared = True  # Flag to prevent re-processing
+
+
+def reset_for_new_recording():
+    """Reset everything for a completely new recording"""
+    st.session_state.current_audio_data = None
+    st.session_state.last_transcription = ""
+    st.session_state.processing_complete = False
+    st.session_state.audio_processed = False
+    st.session_state.pending_food_items = []
+    st.session_state.items_cleared = False
 
 
 def main():
@@ -269,6 +370,8 @@ def main():
             st.session_state.google_api_key = None
             st.session_state.sender_email = None
             st.session_state.sender_app_password = None
+            # Reset audio session
+            reset_for_new_recording()
             st.rerun()
 
     # Main interface
@@ -277,47 +380,22 @@ def main():
     with col1:
         st.subheader("Record Your Food")
 
-        st.session_state.recording = True
-
-        AUDIO_SAVE_PATH = "audio_responses"
-        os.makedirs(AUDIO_SAVE_PATH, exist_ok=True)
-
-        # Record audio
+        # Always show the audio input
         audio_data = record_audio()
 
+        # Show processing status and last transcription
+        if st.session_state.last_transcription and st.session_state.processing_complete:
+            st.info(f"**Last transcription:** {st.session_state.last_transcription}")
+
+        # Process audio if it's new
         if audio_data is not None:
-                audio_save_path = os.path.join(AUDIO_SAVE_PATH, "recorded_response.wav")
-                with open(audio_save_path, "wb") as f:
-                    f.write(audio_data.getbuffer())
+            process_new_audio(audio_data)
 
-                    # Transcribe audio
-                with st.spinner("🔄 Transcribing audio..."):
-                    try:
-                        transcribed_text = transcribe_audio(audio_save_path)
-
-                        if transcribed_text:
-                            st.success("✅ Transcription completed!")
-                            st.write("**Transcribed text:**", transcribed_text)
-
-                            # Process with Gemini
-                            with st.spinner("🤖 Analyzing food items with AI..."):
-                                food_items = process_food_with_gemini(transcribed_text)
-
-                                if food_items:
-                                    st.success("✅ Food analysis completed!")
-                                    st.session_state.pending_food_items = food_items
-                                else:
-                                    st.warning("No food items detected. Please try again with clearer speech.")
-
-                            # Clean up temporary file
-                            if os.path.exists(audio_save_path):
-                                os.remove(audio_save_path)
-                        else:
-                            st.warning("No speech detected. Please try again.")
-                    except Exception as e:
-                        st.error(f"Error processing audio: {str(e)}")
-
-        st.session_state.recording = False
+        # Button to start fresh recording session
+        if st.button("🔄 Process Audio", type="secondary"):
+            reset_for_new_recording()
+            st.success("Ready for new recording!")
+            st.rerun()
 
     with col2:
         st.subheader("Quick Stats")
@@ -332,13 +410,20 @@ def main():
         st.metric("Total Fats", f"{st.session_state.session_fats:.1f}g")
         st.metric("Total Protein", f"{st.session_state.session_protein:.1f}g")
 
+        # Show processing status
+        if st.session_state.processing_complete:
+            st.success("✅ Audio processed and ready")
+        elif st.session_state.current_audio_data is not None:
+            st.info("🔄 Audio recorded, waiting for processing...")
+
     # Display pending food items for confirmation
-    if st.session_state.pending_food_items:
+    if st.session_state.pending_food_items and st.session_state.processing_complete:
         display_food_confirmation(st.session_state.pending_food_items)
 
         # Clear pending items after processing
-        if st.button("🗑️ Clear Pending Items"):
-            st.session_state.pending_food_items = []
+        if st.button("🗑️ Clear Pending Items", key=f"clear_pending_session_{st.session_state.session_id}"):
+            reset_audio_session()
+            st.success("Pending items cleared. Audio remains processed.")
             st.rerun()
 
     # Display food logs
@@ -385,11 +470,11 @@ def main():
     st.subheader("📋 How to Use")
     st.markdown("""
     1. **Configure API**: Add your Gemini API key to the secrets
-    2. **Click 'Start Recording'** to begin voice recording
-    3. **Speak clearly** about what you ate (e.g., "I had a grilled chicken breast and a cup of rice")
-    4. **Wait for AI analysis** - the app will identify food items, calories, and macronutrients
-    5. **Confirm items and quantities** - adjust serving sizes as needed
-    6. **Add to log** - each confirmed item will be saved with calories and macros
+    2. **Use the audio recorder** - record what you ate clearly
+    3. **Wait for processing** - the app will automatically transcribe and analyze
+    4. **Confirm items and quantities** - adjust serving sizes as needed
+    5. **Add to log** - each confirmed item will be saved with calories and macros
+    6. **Start new recording** - use the "Start New Recording" button for fresh session
     7. **Export your data** as CSV when needed
 
     **Tips for better results:**
@@ -397,6 +482,7 @@ def main():
     - Include preparation methods (grilled, fried, etc.)
     - Be specific about food types (brown rice vs white rice)
     - Use a quiet environment for recording
+    - Wait for processing to complete before starting new recording
     """)
 
 
