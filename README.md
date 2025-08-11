@@ -78,7 +78,7 @@ An intelligent multi-agent system for continuous glucose monitoring (CGM) that f
 git clone https://github.com/Hassaan202/GCM_Agentic_AI/tree/main
 
 # Install dependencies
-pip install -r requirements.txt
+pip install -r packages.txt
 
 #running
 run app.py in a python environment
